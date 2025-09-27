@@ -1,7 +1,8 @@
 import { create } from "zustand";
-import { Order, OrderStatus } from "../types/order";
-import api from "../services/api";
+
 import { io, Socket } from "socket.io-client";
+import type { Order, OrderStatus } from "../types/order";
+import api from "../services/api";
 
 interface OrderState {
   orders: Order[];
