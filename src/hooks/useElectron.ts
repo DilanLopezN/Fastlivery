@@ -1,12 +1,16 @@
-import { useEffect, useState } from "react";
-import { useProductStore } from "../store/useProductStore";
+import { useEffect, useState, useCallback } from "react";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
+import { useProductStore } from "../store/useProductStore";
 import toast from "react-hot-toast";
 
 export const useElectron = () => {
   const [isElectron, setIsElectron] = useState(false);
-  const { setProductModalOpen, setComboModalOpen } = useProductStore();
+  const [productModalOpen, setProductModalOpen] = useState(false);
+  const [comboModalOpen, setComboModalOpen] = useState(false);
+  const [categoriesModalOpen, setCategoriesModalOpen] = useState(false);
+
   const { currentWorkspace } = useWorkspaceStore();
+  const { fetchProducts } = useProductStore();
 
   useEffect(() => {
     // Detectar se está rodando no Electron
@@ -14,29 +18,33 @@ export const useElectron = () => {
 
     if (window.electronAPI) {
       // Event listeners para menu
-      window.electronAPI.onMenuNewProduct(() => {
+      const handleNewProduct = () => {
         setProductModalOpen(true);
-      });
+      };
 
-      window.electronAPI.onMenuNewCombo(() => {
+      const handleNewCombo = () => {
         setComboModalOpen(true);
-      });
+      };
 
-      window.electronAPI.onMenuManageCategories(() => {
-        // Redirecionar para tab de categorias
-        window.location.hash = "#categories";
-        // Ou usar navigate se estiver usando React Router
-        // navigate("/products?tab=categories");
-      });
+      const handleManageCategories = () => {
+        setCategoriesModalOpen(true);
+        // Ou redirecionar para tab de categorias
+        // window.location.hash = "#categories";
+      };
 
-      // Event listeners para import/export
-      window.electronAPI.onImportProducts((filePath: string) => {
-        handleImportProducts(filePath);
-      });
+      const handleImportProducts = (filePath: string) => {
+        importProductsFromFile(filePath);
+      };
 
-      window.electronAPI.onExportProducts((filePath: string) => {
-        handleExportProducts(filePath);
-      });
+      const handleExportProducts = (filePath: string) => {
+        exportProductsToFile(filePath);
+      };
+
+      window.electronAPI.onMenuNewProduct(handleNewProduct);
+      window.electronAPI.onMenuNewCombo(handleNewCombo);
+      window.electronAPI.onMenuManageCategories(handleManageCategories);
+      window.electronAPI.onImportProducts(handleImportProducts);
+      window.electronAPI.onExportProducts(handleExportProducts);
 
       // Cleanup function
       return () => {
@@ -49,85 +57,140 @@ export const useElectron = () => {
     }
   }, []);
 
-  const handleImportProducts = async (filePath: string) => {
-    if (!window.electronAPI || !currentWorkspace) return;
+  const importProductsFromFile = useCallback(
+    async (filePath: string) => {
+      if (!window.electronAPI || !currentWorkspace) return;
 
-    try {
-      toast.loading("Importando produtos...");
+      const loadingToast = toast.loading("Importando produtos...");
 
-      // Ler arquivo
-      const fileContent = await window.electronAPI.readImportFile(filePath);
+      try {
+        // Ler arquivo
+        const fileContent = await window.electronAPI.readImportFile(filePath);
 
-      // Processar dados baseado na extensão
-      const ext = filePath.split(".").pop()?.toLowerCase();
-      let products = [];
+        // Processar dados baseado na extensão
+        const ext = filePath.split(".").pop()?.toLowerCase();
+        let products = [];
 
-      if (ext === "csv") {
-        products = parseCSV(fileContent);
-      } else if (ext === "xlsx" || ext === "xls") {
-        // Para Excel, você precisaria de uma biblioteca como xlsx
-        toast.error("Importação de Excel ainda não implementada");
-        return;
+        if (ext === "csv") {
+          products = parseCSV(fileContent);
+        } else if (ext === "xlsx" || ext === "xls") {
+          // Para Excel, você precisaria de uma biblioteca como xlsx
+          toast.dismiss(loadingToast);
+          toast.error("Importação de Excel ainda não implementada");
+          return;
+        } else {
+          toast.dismiss(loadingToast);
+          toast.error("Formato de arquivo não suportado");
+          return;
+        }
+
+        // Salvar produtos
+        let successCount = 0;
+        let errorCount = 0;
+
+        for (const product of products) {
+          try {
+            await window.electronAPI.saveProduct({
+              ...product,
+              workspaceId: currentWorkspace.id,
+            });
+            successCount++;
+          } catch (error) {
+            errorCount++;
+            console.error(`Erro ao importar produto ${product.name}:`, error);
+          }
+        }
+
+        toast.dismiss(loadingToast);
+
+        if (successCount > 0) {
+          toast.success(`${successCount} produtos importados com sucesso!`);
+          // Recarregar produtos
+          fetchProducts(currentWorkspace.id);
+        }
+
+        if (errorCount > 0) {
+          toast.error(`${errorCount} produtos falharam na importação`);
+        }
+      } catch (error) {
+        toast.dismiss(loadingToast);
+        toast.error("Erro ao importar produtos");
+        console.error("Erro na importação:", error);
       }
+    },
+    [currentWorkspace, fetchProducts]
+  );
 
-      // Salvar produtos
-      for (const product of products) {
-        await window.electronAPI.saveProduct({
-          ...product,
-          workspaceId: currentWorkspace.id,
-        });
+  const exportProductsToFile = useCallback(
+    async (filePath: string) => {
+      if (!window.electronAPI || !currentWorkspace) return;
+
+      const loadingToast = toast.loading("Exportando produtos...");
+
+      try {
+        // Buscar produtos do workspace atual
+        const response = await window.electronAPI.getProducts(
+          currentWorkspace.id
+        );
+        const products = response.data;
+
+        if (products.length === 0) {
+          toast.dismiss(loadingToast);
+          toast.error("Nenhum produto para exportar");
+          return;
+        }
+
+        // Converter para CSV
+        const csvContent = generateCSV(products);
+
+        // Salvar arquivo
+        await window.electronAPI.writeExportFile(filePath, csvContent);
+
+        toast.dismiss(loadingToast);
+        toast.success(`${products.length} produtos exportados com sucesso!`);
+      } catch (error) {
+        toast.dismiss(loadingToast);
+        toast.error("Erro ao exportar produtos");
+        console.error("Erro na exportação:", error);
       }
-
-      toast.dismiss();
-      toast.success(`${products.length} produtos importados com sucesso!`);
-
-      // Recarregar produtos
-      // fetchProducts(currentWorkspace.id);
-    } catch (error) {
-      toast.dismiss();
-      toast.error("Erro ao importar produtos");
-      console.error("Erro na importação:", error);
-    }
-  };
-
-  const handleExportProducts = async (filePath: string) => {
-    if (!window.electronAPI || !currentWorkspace) return;
-
-    try {
-      toast.loading("Exportando produtos...");
-
-      // Buscar produtos do workspace atual
-      const response = await window.electronAPI.getProducts(
-        currentWorkspace.id
-      );
-      const products = response.data;
-
-      // Converter para CSV
-      const csvContent = generateCSV(products);
-
-      // Salvar arquivo
-      await window.electronAPI.writeExportFile(filePath, csvContent);
-
-      toast.dismiss();
-      toast.success("Produtos exportados com sucesso!");
-    } catch (error) {
-      toast.dismiss();
-      toast.error("Erro ao exportar produtos");
-      console.error("Erro na exportação:", error);
-    }
-  };
+    },
+    [currentWorkspace]
+  );
 
   const parseCSV = (csvContent: string) => {
-    const lines = csvContent.split("\n");
-    const headers = lines[0].split(",").map((h) => h.trim());
+    const lines = csvContent.split("\n").filter((line) => line.trim());
+    if (lines.length < 2) return [];
+
+    const headers = lines[0]
+      .split(",")
+      .map((h) => h.trim().replace(/^["']|["']$/g, ""));
     const products = [];
 
     for (let i = 1; i < lines.length; i++) {
-      const values = lines[i].split(",");
+      // Parse CSV considerando valores entre aspas
+      const values: any = [];
+      let current = "";
+      let inQuotes = false;
+
+      for (let j = 0; j < lines[i].length; j++) {
+        const char = lines[i][j];
+
+        if (char === '"' || char === "'") {
+          inQuotes = !inQuotes;
+        } else if (char === "," && !inQuotes) {
+          values.push(current.trim());
+          current = "";
+        } else {
+          current += char;
+        }
+      }
+      values.push(current.trim()); // Adicionar último valor
+
       if (values.length === headers.length) {
         const product: any = {};
+
         headers.forEach((header, index) => {
-          const value = values[index]?.trim();
+          const value = values[index]?.replace(/^["']|["']$/g, "").trim();
 
           // Mapear campos CSV para campos do produto
           switch (header.toLowerCase()) {
@@ -136,21 +199,26 @@ export const useElectron = () => {
               product.name = value;
               break;
             case "descrição":
+            case "descricao":
             case "description":
               product.description = value;
               break;
             case "preço":
+            case "preco":
             case "price":
-              product.price = parseFloat(value) || 0;
+              product.price = parseFloat(value.replace(",", ".")) || 0;
               break;
             case "categoria":
             case "category":
               product.category = value;
               break;
             case "disponível":
+            case "disponivel":
             case "available":
               product.available =
-                value.toLowerCase() === "true" || value === "1";
+                value.toLowerCase() === "true" ||
+                value.toLowerCase() === "sim" ||
+                value === "1";
               break;
             case "tempo_preparo":
             case "preparation_time":
@@ -161,18 +229,21 @@ export const useElectron = () => {
               product.calories = parseInt(value) || 0;
               break;
             case "tags":
-              product.tags = value ? value.split("|").map((t) => t.trim()) : [];
+              product.tags = value
+                ? value.split("|").map((t: any) => t.trim())
+                : [];
               break;
             case "alérgenos":
+            case "alergenos":
             case "allergens":
               product.allergens = value
-                ? value.split("|").map((a) => a.trim())
+                ? value.split("|").map((a: any) => a.trim())
                 : [];
               break;
           }
         });
 
-        if (product.name && product.price) {
+        if (product.name && product.price !== undefined) {
           products.push(product);
         }
       }
@@ -199,16 +270,19 @@ export const useElectron = () => {
       product.description || "",
       product.price || 0,
       product.category || "",
-      product.available ? "true" : "false",
+      product.available ? "sim" : "não",
       product.preparationTime || 0,
       product.calories || 0,
       (product.tags || []).join("|"),
       (product.allergens || []).join("|"),
     ]);
 
-    return [headers, ...rows]
-      .map((row) => row.map((cell) => `"${cell}"`).join(","))
-      .join("\n");
+    // Adicionar aspas para lidar com vírgulas nos valores
+    const csvRows = [headers, ...rows].map((row) =>
+      row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")
+    );
+
+    return csvRows.join("\n");
   };
 
   const uploadImage = async (file: File): Promise<string> => {
@@ -218,16 +292,28 @@ export const useElectron = () => {
 
     try {
       // Converter File para base64
-      const arrayBuffer = await file.arrayBuffer();
-      const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
-      const dataUrl = `data:${file.type};base64,${base64}`;
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
 
-      // Upload via Electron
-      const imagePath = await window.electronAPI.uploadProductImage(
-        dataUrl,
-        file.name
-      );
-      return imagePath;
+        reader.onload = async () => {
+          try {
+            const dataUrl = reader.result as string;
+            const imagePath = await window.electronAPI!.uploadProductImage(
+              dataUrl,
+              file.name
+            );
+            resolve(imagePath);
+          } catch (error) {
+            reject(error);
+          }
+        };
+
+        reader.onerror = () => {
+          reject(new Error("Erro ao ler arquivo"));
+        };
+
+        reader.readAsDataURL(file);
+      });
     } catch (error) {
       console.error("Erro ao fazer upload da imagem:", error);
       throw error;
@@ -256,9 +342,11 @@ export const useElectron = () => {
       const result = await window.electronAPI.selectImageFile();
       if (!result.canceled && result.filePaths.length > 0) {
         const filePath = result.filePaths[0];
-        // Converter path para File object se necessário
-        // Esta implementação depende de como você quer lidar com arquivos locais
-        return null; // Placeholder
+        // Em uma aplicação Electron real, você precisaria implementar
+        // uma forma de converter o path em File object
+        // Por enquanto, retornamos null como placeholder
+        console.log("Arquivo selecionado:", filePath);
+        return null;
       }
       return null;
     } catch (error) {
@@ -288,18 +376,30 @@ export const useElectron = () => {
     selectImageFile,
     openExternalLink,
     showInFolder,
-    handleImportProducts,
-    handleExportProducts,
+    importProductsFromFile,
+    exportProductsToFile,
+    // Estados dos modais
+    productModalOpen,
+    setProductModalOpen,
+    comboModalOpen,
+    setComboModalOpen,
+    categoriesModalOpen,
+    setCategoriesModalOpen,
   };
 };
 
 // Hook específico para integração com ProductStore
 export const useElectronProductStore = () => {
   const { isElectron, uploadImage } = useElectron();
+  const { currentWorkspace } = useWorkspaceStore();
 
   const createProductWithElectron = async (productData: any) => {
     if (!window.electronAPI) {
       throw new Error("Electron API não disponível");
+    }
+
+    if (!currentWorkspace) {
+      throw new Error("Workspace não selecionado");
     }
 
     try {
@@ -309,8 +409,16 @@ export const useElectronProductStore = () => {
         productData.image = imagePath;
       }
 
+      // Adicionar workspaceId
+      productData.workspaceId = currentWorkspace.id;
+
       // Salvar produto via Electron
       const result = await window.electronAPI.saveProduct(productData);
+
+      if (!result.success) {
+        throw new Error("Falha ao salvar produto");
+      }
+
       return result;
     } catch (error) {
       console.error("Erro ao criar produto via Electron:", error);
@@ -338,6 +446,11 @@ export const useElectronProductStore = () => {
         ...productData,
         id: productId,
       });
+
+      if (!result.success) {
+        throw new Error("Falha ao atualizar produto");
+      }
+
       return result;
     } catch (error) {
       console.error("Erro ao atualizar produto via Electron:", error);
@@ -352,6 +465,11 @@ export const useElectronProductStore = () => {
 
     try {
       const result = await window.electronAPI.deleteProduct(productId);
+
+      if (!result.success) {
+        throw new Error("Falha ao deletar produto");
+      }
+
       return result;
     } catch (error) {
       console.error("Erro ao deletar produto via Electron:", error);
