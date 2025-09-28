@@ -5,10 +5,14 @@ import {
   Navigate,
 } from "react-router-dom";
 import { Toaster } from "react-hot-toast";
+import Dashboard from "./pages/Dashboard";
+import Orders from "./pages/Orders";
+import Products from "./pages/Products";
+import Settings from "./pages/Settings";
+import Login from "./pages/Login";
 
 import { useAuthStore } from "./store/useAuthStore";
-import Dashboard from "./pages/dashboard";
-import "./index.css";
+
 function App() {
   const { isAuthenticated } = useAuthStore();
 
@@ -38,8 +42,24 @@ function App() {
 
       <Routes>
         <Route
+          path="/login"
+          element={!isAuthenticated ? <Login /> : <Navigate to="/" />}
+        />
+        <Route
           path="/"
           element={!isAuthenticated ? <Dashboard /> : <Navigate to="/login" />}
+        />
+        <Route
+          path="/orders"
+          element={!isAuthenticated ? <Orders /> : <Navigate to="/login" />}
+        />
+        <Route
+          path="/products"
+          element={!isAuthenticated ? <Products /> : <Navigate to="/login" />}
+        />
+        <Route
+          path="/settings"
+          element={!isAuthenticated ? <Settings /> : <Navigate to="/login" />}
         />
       </Routes>
     </Router>
