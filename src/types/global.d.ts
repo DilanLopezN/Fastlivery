@@ -1,22 +1,11 @@
-/// <reference types="vite/client" />
+// Tipos globais para Electron API
 
-interface ImportMetaEnv {
-  readonly VITE_API_URL: string;
-  readonly VITE_WS_URL: string;
-  readonly NODE_ENV: "development" | "production";
-}
-
-interface ImportMeta {
-  readonly env: ImportMetaEnv;
-}
-
-// Tipos do Electron API
 interface ElectronAPI {
   // Workspaces
   getWorkspaces: () => Promise<any[]>;
   openWorkspace: (workspaceId: string) => Promise<void>;
 
-  // Orders (existente)
+  // Orders
   updateOrderStatus: (orderId: string, status: string) => Promise<any>;
 
   // Products - CRUD
@@ -104,5 +93,4 @@ declare global {
   }
 }
 
-// Export vazio para fazer este arquivo ser tratado como um módulo
 export {};
